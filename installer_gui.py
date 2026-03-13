@@ -5,18 +5,15 @@ import ctypes
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import win32com.client  # Требуется: pip install pywin32
+import win32com.client
 import shutil
 
-# Скрываем основное окно консоли (только для Windows)
 if sys.platform == "win32":
     ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 
 
 def resource_path(relative_path):
-    """ Получает абсолютный путь к ресурсу, работает для dev и для PyInstaller """
     try:
-        # PyInstaller создает временную папку и хранит путь в _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
@@ -27,12 +24,22 @@ class MineControlInstaller:
     def __init__(self, root):
         self.root = root
         self.root.title("MineControl Bot - Master Installer")
-        self.root.geometry("500x460")
+        self.root.geometry("500x580")
         self.root.resizable(False, False)
 
-        # Переменные
+        # --- УСТАНОВКА ИКОНКИ ОКНА ---
+        try:
+            # Ищем файл icon.ico внутри ресурсов
+            icon_file = resource_path("icon.ico")
+            if os.path.exists(icon_file):
+                self.root.iconbitmap(icon_file)
+        except Exception as e:
+            print(f"Не удалось загрузить иконку: {e}")
+
         self.server_dir = tk.StringVar(value="C:\\MineControlBot")
         self.mc_server_path = tk.StringVar(value="C:\\Server")
+        self.bot_token = tk.StringVar(value="")
+        self.admin_id = tk.StringVar(value="")
         self.create_desktop_shortcut = tk.BooleanVar(value=True)
         self.add_to_startup = tk.BooleanVar(value=False)
 
@@ -45,9 +52,14 @@ class MineControlInstaller:
         main_frame = ttk.Frame(self.root, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(main_frame, text="Установка MineControl Bot", font=("Arial", 16, "bold")).pack(pady=(0, 20))
+        ttk.Label(main_frame, text="Установка MineControl Bot", font=("Arial", 16, "bold")).pack(pady=(0, 15))
 
-        # Выбор пути установки
+        ttk.Label(main_frame, text="Токен бота (от @BotFather):").pack(anchor=tk.W)
+        ttk.Entry(main_frame, textvariable=self.bot_token, show="*").pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(main_frame, text="Ваш Telegram ID (ID админа):").pack(anchor=tk.W)
+        ttk.Entry(main_frame, textvariable=self.admin_id).pack(fill=tk.X, pady=(0, 10))
+
         ttk.Label(main_frame, text="Куда установить файлы бота:").pack(anchor=tk.W)
         path_bot_frame = ttk.Frame(main_frame)
         path_bot_frame.pack(fill=tk.X, pady=(5, 10))
@@ -55,8 +67,7 @@ class MineControlInstaller:
         ttk.Button(path_bot_frame, text="Обзор...", command=lambda: self.browse_folder(self.server_dir)).pack(
             side=tk.RIGHT)
 
-        # Путь к серверу
-        ttk.Label(main_frame, text="Папка с сервером Minecraft (для управления):").pack(anchor=tk.W)
+        ttk.Label(main_frame, text="Папка с сервером Minecraft:").pack(anchor=tk.W)
         path_mc_frame = ttk.Frame(main_frame)
         path_mc_frame.pack(fill=tk.X, pady=(5, 15))
         ttk.Entry(path_mc_frame, textvariable=self.mc_server_path).pack(side=tk.LEFT, fill=tk.X, expand=True,
@@ -67,9 +78,9 @@ class MineControlInstaller:
         ttk.Separator(main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 
         ttk.Checkbutton(main_frame, text="Создать ярлык на рабочем столе", variable=self.create_desktop_shortcut).pack(
-            anchor=tk.W, pady=5)
+            anchor=tk.W, pady=2)
         ttk.Checkbutton(main_frame, text="Добавить в автозагрузку Windows", variable=self.add_to_startup).pack(
-            anchor=tk.W, pady=5)
+            anchor=tk.W, pady=2)
 
         ttk.Label(main_frame, text="Статус:", font=("Arial", 8, "italic")).pack(anchor=tk.W, pady=(15, 0))
         self.progress = ttk.Progressbar(main_frame, mode='determinate')
@@ -96,6 +107,10 @@ class MineControlInstaller:
             print(f"Shortcut error: {e}")
 
     def run_installation(self):
+        if not self.bot_token.get().strip():
+            if not messagebox.askyesno("Внимание", "Вы не указали токен бота. Уверены, что хотите продолжить?"):
+                return
+
         self.install_btn.config(state=tk.DISABLED)
         self.root.update()
 
@@ -103,17 +118,31 @@ class MineControlInstaller:
         mc_dir = self.mc_server_path.get()
 
         try:
-            # 1. Создаем папку программы
             if not os.path.exists(target_dir):
                 os.makedirs(target_dir, exist_ok=True)
 
             self.progress['value'] = 20
             self.root.update()
 
-            # 2. Создание конфига
+            rcon_password = ""
+            rcon_port = 25575
+            server_props_path = os.path.join(mc_dir, "server.properties")
+
+            if os.path.exists(server_props_path):
+                with open(server_props_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if line.startswith("rcon.password="):
+                            rcon_password = line.strip().split("=", 1)[1]
+                        elif line.startswith("rcon.port="):
+                            rcon_port = int(line.strip().split("=", 1)[1])
+
             config_data = {
+                "bot_token": self.bot_token.get().strip(),
+                "admin_id": self.admin_id.get().strip(),
                 "server_dir": mc_dir,
                 "install_path": target_dir,
+                "rcon_password": rcon_password,
+                "rcon_port": rcon_port,
                 "bot_version": "1.0.0"
             }
             with open(os.path.join(target_dir, "config.json"), "w", encoding="utf-8") as f:
@@ -122,24 +151,21 @@ class MineControlInstaller:
             self.progress['value'] = 40
             self.root.update()
 
-            # 3. Извлечение файла бота из ресурсов установщика
             internal_bot_exe = resource_path("control.exe")
             final_bot_path = os.path.join(target_dir, "control.exe")
 
             if os.path.exists(internal_bot_exe):
                 shutil.copy2(internal_bot_exe, final_bot_path)
             else:
-                # Поиск файла рядом (для тестирования без компиляции инсталлера)
                 ext_bot = os.path.join(os.path.dirname(sys.argv[0]), "control.exe")
                 if os.path.exists(ext_bot):
                     shutil.copy2(ext_bot, final_bot_path)
                 else:
-                    raise FileNotFoundError("Критическая ошибка: Файл control.exe не найден.")
+                    raise FileNotFoundError("Файл control.exe не найден.")
 
             self.progress['value'] = 80
             self.root.update()
 
-            # 4. Создание ярлыков
             if self.create_desktop_shortcut.get():
                 desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
                 self.create_shortcut(final_bot_path, os.path.join(desktop, "MineControl Bot.lnk"),
